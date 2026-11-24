@@ -75,9 +75,8 @@ a{color:var(--cherry)}
 <footer>DATA SOURCE · <a href="https://www.data.go.kr/data/15127578/openapi.do" target="_blank" rel="noopener">식품의약품안전처_식품영양성분DB정보</a> (공공데이터포털)<br>수치는 원본 그대로 표시하며, 원본에 오류·이상값이 있을 수 있습니다. 의학적 조언이 아닙니다.<br>Sweet Archive — educational project</footer>
 
 <script>
-// ★ 배포 시 여기에 Cloudflare Worker 주소를 넣으세요. 예: 'https://sweet-archive-api.내이름.workers.dev'
-// (인증키는 여기에 절대 넣지 않습니다. 비워 두면 미리보기 모드로 동작합니다.)
-const API_BASE='';
+// 데이터는 GitHub Actions가 만든 data/desserts.json 에서 읽습니다. (인증키는 사이트 어디에도 없습니다.)
+const DATA_URL='./data/desserts.json';let DB=null;
 const ROWS=24, SUGAR_CUBE_G=3;
 const $=s=>document.querySelector(s);
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -108,23 +107,23 @@ const canUnit=x=>{const b=amt(x.basis),w=amt(x.weight);return !!(b&&w&&b.u===w.u
 const mult=(x,m)=>m==='u'&&canUnit(x)?amt(x.weight).v/amt(x.basis).v:1;
 // ---- 데이터 불러오기 ----
 async function load(more){
- if(!API_BASE){S.items=CATS.map(c=>({name:c,cat:c,pre:1}));S.total=0;status('미리보기 모드 · 영양 수치는 서버(Worker) 연결 후 공공데이터로 표시됩니다. 임의의 수치는 만들지 않습니다.');return draw()}
- if(S.busy)return;S.busy=true;S.page=more?S.page+1:1;status('공공데이터를 불러오는 중… 🍰');
- try{
-  const r=await fetch(API_BASE+'/api/foods?'+new URLSearchParams({q:S.q,type:S.type,page:S.page,rows:ROWS}));
-  const d=await r.json().catch(()=>null);
-  if(!r.ok||!d||!d.ok)throw new Error((d&&d.message)||'서버 응답을 확인할 수 없어요.');
-  S.total=d.total;S.items=more?S.items.concat(d.items):d.items;
-  status(S.items.length?`‘${S.q}’ 검색 결과 ${S.total.toLocaleString()}건 중 ${S.items.length}건 표시`:`‘${S.q}’에 해당하는 결과가 없어요. 다른 이름으로 검색해 보세요.`);
- }catch(e){if(!more)S.items=[];S.page=Math.max(1,S.page-(more?1:0));status((e instanceof TypeError?'네트워크 연결을 확인해 주세요.':e.message)+' 잠시 후 다시 시도해 주세요.',1)}
- finally{S.busy=false;draw()}
+ if(!DB){
+  status('데이터를 불러오는 중… 🍰');
+  try{const r=await fetch(DATA_URL,{cache:'no-cache'});if(!r.ok)throw new Error('HTTP '+r.status);DB=await r.json();if(!DB||!Array.isArray(DB.items)||!DB.items.length)throw new Error('empty')}
+  catch(e){DB=null;S.items=CATS.map(c=>({name:c,cat:c,pre:1}));S.total=0;status('미리보기 모드 · 영양 데이터 파일(data/desserts.json)이 아직 없어요. GitHub Actions를 실행하면 공공데이터가 채워집니다. 임의의 수치는 만들지 않아요.');return draw()}
+ }
+ const q=S.q.replace(/\s/g,'');
+ const all=DB.items.filter(x=>(S.type==='all'||x.cls===S.type)&&x.name.replace(/\s/g,'').includes(q)).sort((a,b)=>a.name.length-b.name.length);
+ S.page=more?S.page+1:1;S.total=all.length;S.items=all.slice(0,S.page*ROWS);
+ status(S.items.length?`‘${S.q}’ 검색 결과 ${S.total.toLocaleString()}건 중 ${S.items.length}건 표시 · 데이터 기준 ${String(DB.updatedAt).slice(0,10)}`:`‘${S.q}’에 해당하는 결과가 없어요. 다른 이름이나 ‘전체’ 범위로 검색해 보세요.`);
+ draw();
 }
 // ---- 화면 그리기 ----
 function draw(){
  $('#chips').innerHTML=CATS.map(c=>`<button class="btn chip ${S.cat===c?'on':''}" data-a="cat" data-c="${c}"><svg viewBox="0 0 64 64" fill="none" stroke="#783B40" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">${A[c]}</svg>${c}</button>`).join('');
  document.querySelectorAll('[data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===S.type));
  $('#grid').innerHTML=S.items.map((x,i)=>`<article class="card"><div class="art">${art(x.name,x.cat)}</div><h3>${esc(x.name)}</h3><p class="sm">${esc(x.maker||x.cat||'')}</p>${x.pre?'<p class="sm">연결 후 영양성분 표시</p>':`<p class="sm">${esc(x.basis?x.basis+' 기준':'기준량 미제공')}</p><p><b>${fv(x.kcal,'kcal')}</b> · 당류 ${fv(x.sugar,'g')}</p>${cubes(x.sugar,6)}`}<div class="row" style="justify-content:center;margin-top:4px"><button class="btn s" data-a="info" data-i="${i}" ${x.pre?'disabled':''}>자세히</button><button class="btn s" data-a="add" data-i="${i}" ${x.pre?'disabled':''}>＋ 담기</button></div>${x.pre?'':`<label class="cmp"><input type="checkbox" data-a="cmp" data-i="${i}" ${S.cmp.some(c=>c.id===x.id)?'checked':''}>비교</label>`}</article>`).join('');
- $('#more').innerHTML=!S.pre&&API_BASE&&S.items.length&&S.items.length<S.total?'<button class="btn" data-a="more">더 보기</button>':(API_BASE&&!S.items.length&&$('#status').className.includes('err')?'<button class="btn" data-a="retry">다시 시도</button>':'');
+ $('#more').innerHTML=!S.pre&&DB&&S.items.length&&S.items.length<S.total?'<button class="btn" data-a="more">더 보기</button>':(DB&&!S.items.length&&$('#status').className.includes('err')?'<button class="btn" data-a="retry">다시 시도</button>':'');
  const b=$('#cmpbar');b.style.display=S.cmp.length>=2?'block':'none';b.textContent=`선택한 ${S.cmp.length}개 비교하기`;
  receipt();
 }
